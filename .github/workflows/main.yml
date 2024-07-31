@@ -7,7 +7,7 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch:  
+  workflow_dispatch:  # Allows manual triggering from the GitHub Actions tab
 
 jobs:
   build:
@@ -20,10 +20,12 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
 
     - name: Set up CMake
-      uses: scikit-build/cmake-action@v2
+      uses: actions/setup-cmake@v3
+      with:
+        cmake-version: '3.24'  # Specify the CMake version you need
 
     - name: Set up JUCE
       run: |
@@ -38,7 +40,7 @@ jobs:
         VCTargetsPath: C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Microsoft\VC\v160\
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: build-artifacts
         path: build
