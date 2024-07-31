@@ -1,61 +1,234 @@
-name: Build and Generate Artifacts
+name: Amp
 
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch:  # Allows manual triggering from the GitHub Actions tab
+    workflow_dispatch: # lets you run a build from the UI
+    push:
+
+concurrency:
+    group: ${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    BUILD_TYPE: Release
+    BUILD_DIR: Builds
+    name: GBS
+    DISPLAY: :0
+    CMAKE_BUILD_PARALLEL_LEVEL: 3
+    HOMEBREW_NO_INSTALL_CLEANUP: 1
 
 jobs:
-  build:
-    name: Build on ${{ matrix.os }}
+  build_and_test:
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-
-    strategy:
+    strategy: 
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        build_type: [Release]
-
+        include:
+          - name: macOS
+            os: macOS-latest-xlarge
+            pluginval-binary: pluginval.app/Contents/MacOS/pluginval
+            ccache: ccache
+          #- name: Windows
+          #  os: windows-latest
+          #  pluginval-binary: ./pluginval.exe
+          #  ccache: sccache
+    
     steps:
-    - name: Checkout repository
+
+    - name: Set up Clang
+      if: ${{ matrix.name != 'macOS' }}
+      uses: egor-tensin/setup-clang@v1
+
+    - name: Install Ninja (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: choco install ninja ccache
+    
+    - name: Install macOS Deps
+      if: ${{ matrix.name == 'macOS' }}
+      run: brew install ninja osxutils
+
+    # This block can be removed once 15.1 is default (JUCE requires it when building on macOS 14)
+    - name: Use latest Xcode on system (macOS)
+      if: ${{ matrix.name == 'macOS' }}
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: true
 
-    - name: Install CMake
-      run: |
-        if [ ${{ runner.os }} == 'Linux' ]; then
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential
-        elif [ ${{ runner.os }} == 'macOS' ]; then
-          brew install cmake
-        elif [ ${{ runner.os }} == 'Windows' ]; then
-          choco install cmake --version=3.24.0  # Adjust version as needed
-        fi
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@main
+      with:
+        key: v3-${{ matrix.os }}-${{ matrix.type }}
+        variant: ${{ matrix.ccache }}
 
-    - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -S .
+    - name: Import Certificates (macOS)
+      uses: apple-actions/import-codesign-certs@v3
+      if: ${{ matrix.name == 'macOS' }}
+      with:
+        p12-file-base64: ${{ secrets.DEV_ID_APP_CERT }}
+        p12-password: ${{ secrets.DEV_ID_APP_PASSWORD }}
+
+    - name: Configure
+      shell: bash
+      run: cmake -B ${{ env.BUILD_DIR }} -GXcode -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE}} -DCMAKE_C_COMPILER_LAUNCHER=${{ matrix.ccache }} -DCMAKE_CXX_COMPILER_LAUNCHER=${{ matrix.ccache }} -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" .
 
     - name: Build
-      run: cmake --build build --config ${{ matrix.build_type }}
+      shell: bash
+      run: cmake --build ${{ env.BUILD_DIR }} --config ${{ env.BUILD_TYPE }} --parallel 4
 
-    - name: Test
-      run: ctest --build-config ${{ matrix.build_type }} || true
-
-    - name: Package Artifacts
-      if: success() || failure()
+    - name: Read in .env from CMake
+      shell: bash
       run: |
-        if [ ${{ runner.os }} == 'Linux' ]; then
-          tar -czf minimal_plugin-linux.tar.gz -C build .
-        elif [ ${{ runner.os }} == 'macOS' ]; then
-          tar -czf minimal_plugin-macos.tar.gz -C build .
-        elif [ ${{ runner.os }} == 'Windows' ]; then
-          powershell Compress-Archive -Path build\* -DestinationPath minimal_plugin-windows.zip
-        fi
+        cat .env
+        cat .env >> $GITHUB_ENV
 
-    - name: Upload Artifacts
+    - name: Set additional env vars for next steps
+      shell: bash
+      run: |
+        echo "ARTIFACTS_PATH=${{ env.BUILD_DIR }}/plugins/${{ env.name }}/${{ env.name }}_artefacts/${{ env.BUILD_TYPE }}" >> $GITHUB_ENV
+        echo "VST3_PATH=${{ env.name }}_artefacts/${{ env.BUILD_TYPE }}/VST3/${{ env.PRODUCT_NAME }}.vst3" >> $GITHUB_ENV
+        echo "AU_PATH=${{ env.name }}_artefacts/${{ env.BUILD_TYPE }}/AU/${{ env.PRODUCT_NAME }}.component" >> $GITHUB_ENV
+        echo "AAX_PATH=${{ env.name }}_artefacts/${{ env.BUILD_TYPE }}/AAX/${{ env.PRODUCT_NAME }}.aaxplugin" >> $GITHUB_ENV
+        echo "ARTIFACT_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-${{ matrix.name }}" >> $GITHUB_ENV
+
+    - name: Pluginval
+      working-directory: ${{ env.BUILD_DIR }}
+      shell: bash
+      run: |
+        curl -LO "https://github.com/Tracktion/pluginval/releases/download/v1.0.3/pluginval_${{ matrix.name }}.zip"
+        7z x pluginval_${{ matrix.name }}.zip
+        ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "./plugins/GBS/${{ env.VST3_PATH }}"
+
+    - name: Pluginval-AU
+      working-directory: ${{ env.BUILD_DIR }}
+      if: ${{ matrix.name == 'macOS' }}
+      shell: bash
+      run: |
+        auval -a
+        ${{ matrix.pluginval-binary }} --strictness-level 10 --verbose --validate "./plugins/GBS/${{ env.AU_PATH }}"
+
+    - name: auval
+      working-directory: ${{ env.BUILD_DIR }}
+      if: ${{ matrix.name == 'macOS' }}
+      shell: bash
+      run: |
+        auval -strict -stress -v "./plugins/GBS/${{ env.AU_PATH }}"
+
+    - name: Codesign (macOS)
+      working-directory: ${{ env.BUILD_DIR }}
+      if: ${{ matrix.name == 'macOS' }}
+      run: |
+        codesign --force -s "${{ secrets.DEVELOPER_ID_APPLICATION }}" -v "./plugins/${{ env.name }}/${{ env.VST3_PATH }}" --deep --strict --options=runtime --timestamp
+        codesign --force -s "${{ secrets.DEVELOPER_ID_APPLICATION }}" -v "./plugins/${{ env.name }}/${{ env.AU_PATH }}" --deep --strict --options=runtime --timestamp
+        codesign --force -s "${{ secrets.DEVELOPER_ID_APPLICATION }}" -v "./plugins/${{ env.name }}/${{ env.AAX_PATH }}" --deep --strict --options=runtime --timestamp
+    
+    - name: Upload .env (Windows)
+      if: ${{ matrix.name == 'Windows' }}
       uses: actions/upload-artifact@v3
       with:
-        name: ${{ runner.os }}-artifacts
+        name: env-file-windows
+        path: .env
+
+    - name: Upload .env (MacOS)
+      if: ${{ matrix.name == 'macOS' }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: env-file-mac
+        path: .env
+
+    - name: Upload build artefacts (Windows)
+      if: ${{ matrix.name == 'Windows' }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.PRODUCT_NAME }}-build-output-windows
         path: |
-          minimal_plugin-${{ runner.os }}.tar.gz
-          minimal_plugin-${{ runner.os }}.zip
+          ${{ env.ARTIFACTS_PATH }}
+          !${{ env.ARTIFACTS_PATH }}/**/*.a
+          !${{ env.ARTIFACTS_PATH }}/**/*.lib
+  
+    - name: Upload build artefacts (MacOS)
+      if: ${{ matrix.name == 'macOS' }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.PRODUCT_NAME }}-build-output-macOS
+        path: |
+            ${{ env.ARTIFACTS_PATH }}
+            !${{ env.ARTIFACTS_PATH }}/**/*.a
+            !${{ env.ARTIFACTS_PATH }}/**/*.lib
+  
+  build_installer_mac:
+    name: macOS-installer
+    runs-on: macos-latest
+    needs: build_and_test
+    strategy: 
+      fail-fast: false
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          submodules: false
+
+      - name: Download macOS env file
+        uses: actions/download-artifact@v3
+        id: env-file
+        with: 
+          name: env-file-mac
+          path: ./
+
+      - name: Read in .env from CMake
+        shell: bash
+        run: |
+          cat .env
+          cat .env >> $GITHUB_ENV
+
+      - name: Setup Environment Variables
+        shell: bash
+        run: |
+          echo "PROJECT_NAME=${{ env.PRODUCT_NAME }}" >> $GITHUB_ENV
+          echo "BUILD_NAME=${{ env.PRODUCT_NAME }}-${{ env.VERSION }}-macOS" >> $GITHUB_ENV
+
+      - name: Download macOS Build artefacts from previous job
+        uses: actions/download-artifact@v3
+        id: download-artifacts-a
+        with: 
+          name: ${{ env.PROJECT_NAME }}-build-output-macOS
+          path: packaging/mac/payload
+
+      - name: Import Installer Certificates (macOS)
+        uses: apple-actions/import-codesign-certs@v3
+        with: 
+          p12-file-base64: ${{ secrets.DEV_ID_INSTALL_CERT }}
+          p12-password: ${{ secrets.DEV_ID_INSTALL_PASSWORD }}
+
+      - name: Download Packages installer build tool
+        run: wget http://s.sudre.free.fr/Software/files/Packages.dmg
+
+      - name: Mount Packages image
+        run: hdiutil attach Packages.dmg
+
+      - name: Install Packages
+        run: sudo installer -pkg /Volumes/Packages\ 1.2.10/Install\ Packages.pkg -target /
+
+      - name: Build installer
+        run: packagesbuild packaging/mac/Audiopunks\ -\ GBS.pkgproj
+      
+      - name: Sign installer
+        working-directory: ${{ runner.workspace }}/TheGreatBritishSpring/packaging/mac/build/
+        run: productsign -s "${{ secrets.DEVELOPER_ID_INSTALLER }}" "./Audiopunks - GBS.pkg" "../${{ env.BUILD_NAME }}.pkg"
+
+      - name: Notarize installer
+        run: | 
+          xcrun notarytool submit "packaging/mac/${{ env.BUILD_NAME }}.pkg" --apple-id ${{ secrets.NOTARIZATION_USERNAME }} --password ${{ secrets.NOTARIZATION_PASSWORD }} --team-id ${{ secrets.TEAM_ID }} --wait
+          xcrun stapler staple "packaging/mac/${{ env.BUILD_NAME }}.pkg"
+
+      - name: Upload Installer (MacOS)
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ env.BUILD_NAME }}-installer
+          path: packaging/mac/${{ env.BUILD_NAME }}.pkg
