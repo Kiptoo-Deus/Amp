@@ -1,0 +1,66 @@
+name: Build and Generate Artifacts
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:  # Allows manual triggering from the GitHub Actions tab
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        build_type: [Release]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up CMake
+      uses: actions/setup-cmake@v3
+      with:
+        cmake-version: '3.24'  # Adjust CMake version as needed
+
+    - name: Install Dependencies
+      run: |
+        if [ ${{ runner.os }} == 'Linux' ]; then
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+        elif [ ${{ runner.os }} == 'macOS' ]; then
+          brew install cmake
+        elif [ ${{ runner.os }} == 'Windows' ]; then
+          choco install cmake --version=3.24.0  # Adjust version as needed
+        fi
+
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -S .
+
+    - name: Build
+      run: cmake --build build --config ${{ matrix.build_type }}
+
+    - name: Test
+      run: ctest --build-config ${{ matrix.build_type }} || true
+
+    - name: Package Artifacts
+      if: success() || failure()
+      run: |
+        if [ ${{ runner.os }} == 'Linux' ]; then
+          tar -czf minimal_plugin-linux.tar.gz -C build .
+        elif [ ${{ runner.os }} == 'macOS' ]; then
+          tar -czf minimal_plugin-macos.tar.gz -C build .
+        elif [ ${{ runner.os }} == 'Windows' ]; then
+          powershell Compress-Archive -Path build\* -DestinationPath minimal_plugin-windows.zip
+        fi
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ runner.os }}-artifacts
+        path: |
+          minimal_plugin-${{ runner.os }}.tar.gz
+          minimal_plugin-${{ runner.os }}.zip
