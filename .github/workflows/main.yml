@@ -1,233 +1,73 @@
-# Continuous Integration for AU/VST3/Standalone audio plugins made with JUCE + CMake for Windows/Linux/macOS
-name: CMake Build Matrix
+name: Build and Test
 
-on: [push, pull_request]
-
-env:
-  CMAKE_VERSION: 3.16.2
-  NINJA_VERSION: 1.9.0
-  BUILD_TYPE: Release
-  CCACHE_VERSION: 3.7.7
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
-    name: ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.os }}
+
+    runs-on: ${{ matrix.os }}
+
     strategy:
-      fail-fast: false
       matrix:
-        config:
-        - {
-            name: "Windows Latest MSVC",
-            os: windows-latest,
-            cc: "cl", cxx: "cl",
-            environment_script: "C:/Program Files (x86)/Microsoft Visual Studio/2019/Enterprise/VC/Auxiliary/Build/vcvars64.bat"
-          }
-        - {
-            name: "Ubuntu Latest GCC",
-            os: ubuntu-latest,
-            cc: "gcc", cxx: "g++"
-          }
-        - {
-            name: "macOS Latest Clang",
-            os: macos-latest,
-            cc: "clang", cxx: "clang++"
-          }
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-    - uses: actions/checkout@v2
-      with:
-        submodules: true
-    
-    - if: ${{ runner.os == 'Linux' }}
-      name: Install JUCE dependencies (Linux only)
-      run: | 
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up CMake
+      uses: jwlawson/actions-setup-cmake@v1
+
+    - name: Set up JUCE dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
         sudo apt-get update
-        sudo apt-get install -y g++ libgtk-3-dev libfreetype6-dev libx11-dev libxinerama-dev libxrandr-dev libxcursor-dev mesa-common-dev libasound2-dev freeglut3-dev libxcomposite-dev libcurl4-openssl-dev
-        sudo add-apt-repository -y ppa:webkit-team && sudo apt-get update
-        sudo apt-get install libwebkit2gtk-4.0-37 libwebkit2gtk-4.0-dev
+        sudo apt-get install -y \
+          libasound2-dev \
+          libx11-dev \
+          libxcomposite-dev \
+          libxcursor-dev \
+          libxext-dev \
+          libxinerama-dev \
+          libxrandr-dev \
+          libxrender-dev \
+          libfreetype6-dev \
+          libwebkit2gtk-4.0-dev \
+          libcurl4-gnutls-dev
 
-    - name: Download Ninja and CMake
-      run: |
-        set -e
-        cmake_version=${{ env.CMAKE_VERSION }}
-        ninja_version=${{ env.NINJA_VERSION }}
-        
-        if [ "${{ runner.os }}" = "Windows" ]; then
-          ninja_suffix="win.zip"
-          cmake_suffix="win64-x64.zip"
-          cmake_dir="cmake-${cmake_version}-win64-x64/bin"
-        elif [ "${{ runner.os }}" = "Linux" ]; then
-          ninja_suffix="linux.zip"
-          cmake_suffix="Linux-x86_64.tar.gz"
-          cmake_dir="cmake-${cmake_version}-Linux-x86_64/bin"
-        elif [ "${{ runner.os }}" = "macOS" ]; then
-          ninja_suffix="mac.zip"
-          cmake_suffix="Darwin-x86_64.tar.gz"
-          cmake_dir="cmake-${cmake_version}-Darwin-x86_64/CMake.app/Contents/bin"
-        fi
-        
-        ninja_url="https://github.com/ninja-build/ninja/releases/download/v${ninja_version}/ninja-${ninja_suffix}"
-        curl -L ${ninja_url} -o ninja.zip
-        if [ "${{ runner.os }}" != "Windows" ]; then
-          unzip ninja.zip
-        else
-          powershell -Command "Expand-Archive ninja.zip"
-        fi
-        
-        cmake_url="https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-${cmake_suffix}"
-        curl -L ${cmake_url} -o cmake.zip
-        if [ "${{ runner.os }}" != "Windows" ]; then
-          tar -xzf cmake.zip
-        else
-          powershell -Command "Expand-Archive cmake.zip"
-        fi
-        
-        echo "CMake directory: ${cmake_dir}"
-        echo "::set-output name=cmake_dir::${cmake_dir}"
-
-    - name: Download ccache
-      run: |
-        ccache_url="https://github.com/cristianadam/ccache/releases/download/v${{ env.CCACHE_VERSION }}/${{ runner.os }}.tar.xz"
-        curl -L ${ccache_url} -o ccache.tar.xz
-        tar -xf ccache.tar.xz
-
-    - name: Prepare ccache timestamp
-      run: |
-        date=$(date -u +"%Y-%m-%d-%H:%M:%S")
-        echo "::set-output name=timestamp::${date}"
-
-    - name: ccache cache files
-      uses: actions/cache@v2
-      with:
-        path: .ccache
-        key: ${{ matrix.config.name }}-ccache-${{ steps.ccache_cache_timestamp.outputs.timestamp }}
-        restore-keys: |
-          ${{ matrix.config.name }}-ccache-
-
-    - name: Configure
-      run: |
-        if [ "${{ runner.os }}" = "Windows" ]; then
-          if [ -f "${{ matrix.config.environment_script }}" ]; then
-            call "${{ matrix.config.environment_script }}"
-          fi
-        fi
-        export PATH="${{ steps.cmake_and_ninja.outputs.cmake_dir }}:${PATH}"
-        cmake -S . -B build -D CMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -G Ninja -D CMAKE_C_COMPILER_LAUNCHER=ccache -D CMAKE_CXX_COMPILER_LAUNCHER=ccache
+    - name: Configure CMake
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
     - name: Build
+      run: cmake --build build --config Release
+
+    - name: Make output directory
+      run: mkdir -p ${{ github.workspace }}/artifacts
+
+    - name: Copy build artifacts (Linux)
+      if: runner.os == 'Linux'
       run: |
-        export NINJA_STATUS="[%%f/%%t %o/sec] "
-        if [ "${{ runner.os }}" = "Windows" ]; then
-          if [ -f "environment_script_output.txt" ]; then
-            call "environment_script_output.txt"
-          fi
-        fi
-        cmake --build build
+        cp -r build/*.so ${{ github.workspace }}/artifacts/
+        cp -r build/*.a ${{ github.workspace }}/artifacts/
 
-    - name: Run tests
+    - name: Copy build artifacts (macOS)
+      if: runner.os == 'macOS'
       run: |
-        cmake --build build --target test
-        ctest --output-on-failure
+        cp -r build/*.dylib ${{ github.workspace }}/artifacts/
+        cp -r build/*.a ${{ github.workspace }}/artifacts/
 
-    - if: ${{ runner.os == 'Windows' }}
-      name: Pack (Windows)
+    - name: Copy build artifacts (Windows)
+      if: runner.os == 'Windows'
       run: |
-        mkdir ${{ github.event.repository.name }}-${{ runner.os }}
-        cd build/Release
-        del *.*
-        move * ..\..\..\${{ github.event.repository.name }}-${{ runner.os }}
-        cd ..\..\..
-        cmake -E tar cvf ${{ github.event.repository.name }}-${{ runner.os }}.zip --format=zip -- ${{ github.event.repository.name }}-${{ runner.os }}
+        cp -r build\\Release\\*.dll ${{ github.workspace }}\\artifacts\\
+        cp -r build\\Release\\*.lib ${{ github.workspace }}\\artifacts\\
 
-    - if: ${{ runner.os != 'Windows' }}
-      name: Pack (Unix)
-      run: |
-        mkdir ${{ github.event.repository.name }}-${{ runner.os }}
-        cd build/Release
-        rm *.*
-        mv * ../../../${{ github.event.repository.name }}-${{ runner.os }}
-        cd ../../..
-        cmake -E tar cvf ${{ github.event.repository.name }}-${{ runner.os }}.zip --format=zip -- ${{ github.event.repository.name }}-${{ runner.os }}
-
-    - name: Upload
-      uses: actions/upload-artifact@v2
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
       with:
-        name: ${{ github.event.repository.name }}-${{ runner.os }}
-        path: ${{ github.event.repository.name }}-${{ runner.os }}.zip
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1.0.0
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref }}
-        release_name: Release ${{ github.ref }}
-        draft: false
-        prerelease: false
-
-    - name: Store Release URL
-      run: |
-        echo "${{ steps.create_release.outputs.upload_url }}" > ./upload_url
-    - uses: actions/upload-artifact@v2
-      with:
-        path: ./upload_url
-        name: upload_url
-
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    name: Publish ${{ matrix.config.name }}
-    runs-on: ${{ matrix.config.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        config:
-        - {
-            name: "Windows Latest MSVC", artifact: "Windows",
-            os: windows-latest
-          }
-        - {
-            name: "Ubuntu Latest GCC", artifact: "Linux",
-            os: ubuntu-latest
-          }
-        - {
-            name: "macOS Latest Clang", artifact: "macOS",
-            os: macos-latest
-          }
-    needs: release
-
-    steps:
-    - name: Download artifact
-      uses: actions/download-artifact@v2
-      with:
-        name: ${{ github.event.repository.name }}-${{ matrix.config.artifact }}
-        path: ./
-
-    - name: Download URL
-      uses: actions/download-artifact@v2
-      with:
-        name: upload_url
-        path: ./
-
-    - id: set_upload_url
-      run: |
-        upload_url=$(cat ./upload_url)
-        echo "::set-output name=upload_url::$upload_url"
-
-    - name: Upload to Release
-      id: upload_to_release
-      uses: actions/upload-release-asset@v1.0.1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.set_upload_url.outputs.upload_url }}
-        asset_path: ./${{ github.event.repository.name }}-${{ matrix.config.artifact }}.zip
-        asset_name: ${{ github.event.repository.name }}-${{ matrix.config.artifact }}.zip
-        asset_content_type: application/zip
+        name: build-artifacts
+        path: ${{ github.workspace }}/artifacts
