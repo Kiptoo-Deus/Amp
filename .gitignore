@@ -1,2 +1,16 @@
 
-/build
+
+*.vcxproj
+*.vsidx
+build/.vs/minimal_plugin/v17/.suo
+*.user
+build/CMakeCache.txt
+*.filters
+*.lock
+build/.vs/fm-torchknob/v17/.suo
+*.db
+*.bin
+*.ipch
+# Ignore everything in the build directory
+/build/
+/libtorch

@@ -1,8 +1,14 @@
 cmake_minimum_required(VERSION 3.15)
-project(minimal_plugin VERSION 0.0.1)
+project(fm-torchknob VERSION 0.0.1)
 
 # Path to JUCE folder
 set(JUCE_DIR ${CMAKE_SOURCE_DIR}/JUCE)
+
+# Path to libtorch folder
+set(LIBTORCH_DIR ${CMAKE_SOURCE_DIR}/libtorch)
+
+# Set CMake prefix path for libtorch
+set(CMAKE_PREFIX_PATH "${LIBTORCH_DIR}/share/cmake/Torch")
 
 # Ensure JUCE is added correctly
 if(NOT EXISTS ${JUCE_DIR}/CMakeLists.txt)
@@ -18,7 +24,11 @@ list(APPEND CMAKE_MODULE_PATH ${JUCE_DIR}/extras/Build/CMake)
 # Include JUCE helper functions
 include(JUCEUtils)
 
-juce_add_plugin(minimal_plugin
+# Find libtorch
+find_package(Torch REQUIRED)
+
+# Define the JUCE plugin
+juce_add_plugin(fm-torchknob
     COMPANY_NAME "scandvia"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
@@ -31,15 +41,15 @@ juce_add_plugin(minimal_plugin
     PRODUCT_NAME "AIPlugin"
 )
 
-juce_generate_juce_header(minimal_plugin)
+juce_generate_juce_header(fm-torchknob)
 
-target_sources(minimal_plugin
+target_sources(fm-torchknob
     PRIVATE
     src/PluginEditor.cpp
     src/PluginProcessor.cpp
 )
 
-target_compile_definitions(minimal_plugin
+target_compile_definitions(fm-torchknob
     PUBLIC
     JUCE_ALSA=1
     JUCE_DIRECTSOUND=1
@@ -50,7 +60,8 @@ target_compile_definitions(minimal_plugin
     JUCE_VST3_CAN_REPLACE_VST2=0
 )
 
-target_link_libraries(minimal_plugin
+# Link JUCE libraries
+target_link_libraries(fm-torchknob
     PRIVATE
     juce::juce_audio_utils
     PUBLIC
@@ -58,3 +69,25 @@ target_link_libraries(minimal_plugin
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+# Link against libtorch
+target_link_libraries(fm-torchknob
+    PRIVATE
+    "${TORCH_LIBRARIES}"
+)
+
+# Include libtorch headers
+target_include_directories(fm-torchknob
+    PRIVATE
+    "${TORCH_INCLUDE_DIRS}"
+)
+
+# Copy all libtorch DLLs to the output directory
+if (MSVC)
+    file(GLOB TORCH_DLLS "${LIBTORCH_DIR}/lib/*.dll")
+    add_custom_command(TARGET fm-torchknob
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${TORCH_DLLS}
+        $<TARGET_FILE_DIR:fm-torchknob>)
+endif (MSVC)
