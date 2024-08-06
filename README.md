@@ -1,4 +1,4 @@
-# fm-torchknob
+# Amp
 
 This is a JUCE plugin project integrated with PyTorch.
 
