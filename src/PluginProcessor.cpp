@@ -22,11 +22,23 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
                        )
 #endif
 {
+    phase = 0;
+    dphase = 0;
+    frequency = 440;
 }
 
 NewProjectAudioProcessor::~NewProjectAudioProcessor()
 {
 }
+
+
+double NewProjectAudioProcessor::getDPhase(double freq, double
+    sampleRate)
+     {
+     double two_pi = 3.1415927 * 2;
+     return (two_pi / sampleRate) * freq;
+     }
+
 
 //==============================================================================
 const juce::String NewProjectAudioProcessor::getName() const
