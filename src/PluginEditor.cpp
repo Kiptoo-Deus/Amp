@@ -14,11 +14,9 @@
 NewProjectAudioProcessorEditor::NewProjectAudioProcessorEditor (NewProjectAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
-
-    
-    // Make sure that before the constructor has finished, you've set the
-    // editor's size to whatever you need it to be.
-    setSize (400, 300);
+    addAndMakeVisible(freqControl);
+    freqControl.addListener(this);
+      setSize (400, 300);
 }
 
 NewProjectAudioProcessorEditor::~NewProjectAudioProcessorEditor()
@@ -38,6 +36,16 @@ void NewProjectAudioProcessorEditor::paint (juce::Graphics& g)
 
 void NewProjectAudioProcessorEditor::resized()
 {
-    // This is generally where you'll want to lay out the positions of any
-    // subcomponents in your editor..
+   freqControl.setBounds(0, 0,
+        getWidth(), getHeight() / 5);
 }
+
+void NewProjectAudioProcessorEditor::sliderValueChanged(
+    Slider* slider)
+     {
+     if (slider == &freqControl) {
+         // get the slider value and do something
+             DBG(" Slider value " << slider->getValue());
+        
+    }
+     }
