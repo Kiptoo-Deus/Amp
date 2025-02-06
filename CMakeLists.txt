@@ -5,7 +5,7 @@ project(fm-torchknob VERSION 0.0.1)
 set(JUCE_DIR ${CMAKE_SOURCE_DIR}/JUCE)
 
 # Path to libtorch folder
-set(LIBTORCH_DIR ${CMAKE_SOURCE_DIR}/libtorch)
+set(LIBTORCH_DIR "C:/Users/JOEL/Documents/GitHub/Amp/libtorch")
 
 # Set CMake prefix path for libtorch
 set(CMAKE_PREFIX_PATH "${LIBTORCH_DIR}/share/cmake/Torch")
@@ -82,9 +82,10 @@ target_include_directories(fm-torchknob
     "${TORCH_INCLUDE_DIRS}"
 )
 
-# Copy all libtorch DLLs to the output directory
+# Copy all libtorch DLLs to the output directory after build
 if (MSVC)
     file(GLOB TORCH_DLLS "${LIBTORCH_DIR}/lib/*.dll")
+    message(STATUS "TORCH_DLLS: ${TORCH_DLLS}")
     add_custom_command(TARGET fm-torchknob
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
