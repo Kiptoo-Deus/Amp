@@ -13,4 +13,4 @@ build/.vs/fm-torchknob/v17/.suo
 *.ipch
 # Ignore everything in the build directory
 /build/
-/libtorch
+libtorch
