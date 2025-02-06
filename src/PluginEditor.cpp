@@ -46,6 +46,7 @@ void NewProjectAudioProcessorEditor::sliderValueChanged(
      if (slider == &freqControl) {
          // get the slider value and do something
              DBG(" Slider value " << slider->getValue());
+             audioProcessor.updateFrequency(slider->getValue());
         
     }
      }
